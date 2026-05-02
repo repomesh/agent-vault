@@ -133,7 +133,10 @@ func (p *Proxy) handleConnect(w http.ResponseWriter, r *http.Request) {
 		WriteTimeout:      5 * time.Minute, // upstream streaming can be legit
 		IdleTimeout:       2 * time.Minute,
 		ConnState: func(c net.Conn, state http.ConnState) {
-			if state == http.StateClosed || state == http.StateHijacked {
+			// Either terminal state means Serve should return. The
+			// underlying conn is owned by http.Server (Closed) or by
+			// the hijack handler (Hijacked); we must not close it here.
+			if state == http.StateHijacked || state == http.StateClosed {
 				_ = listener.Close()
 			}
 		},
@@ -207,7 +210,7 @@ func (l *oneShotListener) Close() error {
 	default:
 		close(l.closed)
 	}
-	return l.conn.Close()
+	return nil
 }
 
 func (l *oneShotListener) Addr() net.Addr { return l.conn.LocalAddr() }

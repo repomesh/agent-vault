@@ -69,13 +69,22 @@ func (p *Proxy) forwardHandler(target, host string, scope *brokercore.ProxyScope
 			RawQuery: r.URL.RawQuery,
 		}
 
-		outReq, err := http.NewRequestWithContext(r.Context(), r.Method, outURL.String(), r.Body)
+		body, contentLength, err := brokercore.MaterializeRequestBody(r.Body)
+		if err != nil {
+			status, code := brokercore.RequestBodyErrorCode(err)
+			http.Error(w, http.StatusText(status), status)
+			emit(status, code)
+			return
+		}
+
+		outReq, err := http.NewRequestWithContext(r.Context(), r.Method, outURL.String(), body)
 		if err != nil {
 			http.Error(w, "bad gateway", http.StatusBadGateway)
 			emit(http.StatusBadGateway, "internal")
 			return
 		}
 		outReq.Host = host
+		outReq.ContentLength = contentLength
 
 		inject, err := p.creds.Inject(r.Context(), scope.VaultID, host)
 		if inject != nil {
@@ -95,10 +104,22 @@ func (p *Proxy) forwardHandler(target, host string, scope *brokercore.ProxyScope
 			return
 		}
 
-		// No extraStrip: Proxy-Authorization (the broker-scoped credential
-		// on this ingress) is already filtered by the denylist, and
-		// Authorization is the client's own upstream header.
-		brokercore.ApplyInjection(r.Header, outReq.Header, inject)
+		wsUpgrade := isWebSocketUpgrade(r)
+
+		// WS handshake needs Connection/Upgrade through, but ApplyInjection
+		// would drop them as hop-by-hop. Copy the full handshake set
+		// manually, then tell ApplyInjection to skip them so the
+		// non-hop-by-hop ones (Origin, Sec-*) aren't duplicated. Injection
+		// still wins on overlapping names (Authorization etc.) because
+		// inject.Headers is Set last by ApplyInjection.
+		if wsUpgrade {
+			copyWebSocketHandshakeHeaders(r.Header, outReq.Header)
+			brokercore.ApplyInjection(r.Header, outReq.Header, inject, websocketHandshakeHeaderNames...)
+		} else {
+			// No extraStrip: Proxy-Authorization is already in the broker
+			// denylist, and Authorization is the client's upstream header.
+			brokercore.ApplyInjection(r.Header, outReq.Header, inject)
+		}
 
 		// Apply any declared substitutions to the outbound URL and
 		// headers. Surfaces not listed in the substitution's `in:` are
@@ -106,6 +127,11 @@ func (p *Proxy) forwardHandler(target, host string, scope *brokercore.ProxyScope
 		if err := brokercore.ApplySubstitutions(outReq.URL, outReq.Header, inject.Substitutions); err != nil {
 			http.Error(w, "bad gateway", http.StatusBadGateway)
 			emit(http.StatusBadGateway, "substitution_error")
+			return
+		}
+
+		if wsUpgrade {
+			p.forwardWebSocket(w, r, outReq, emit)
 			return
 		}
 
