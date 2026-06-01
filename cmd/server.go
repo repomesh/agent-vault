@@ -156,7 +156,7 @@ var serverCmd = &cobra.Command{
 		_ = os.Unsetenv("AGENT_VAULT_SMTP_PASSWORD")
 		notifier := notify.New(smtpCfg)
 		srv := server.New(addr, db, masterKey.Key(), notifier, initialized, baseURL, logger)
-		srv.SetSkills(skillCLI, skillHTTP)
+		srv.SetSkills(skillCLI)
 		shutdownLogs := attachLogSink(srv, db, logger)
 		defer shutdownLogs()
 		if err := attachServerExtensions(srv, host, mitmPort, masterKey.Key(), logger, maxRespBytes, maxReqBytes); err != nil {
@@ -520,7 +520,7 @@ func runDetachedChild(host, addr string, mitmPort int, logger *slog.Logger, maxR
 	_ = os.Unsetenv("AGENT_VAULT_SMTP_PASSWORD")
 	notifier := notify.New(smtpCfg)
 	srv := server.New(addr, db, key, notifier, initialized, baseURL, logger)
-	srv.SetSkills(skillCLI, skillHTTP)
+	srv.SetSkills(skillCLI)
 	shutdownLogs := attachLogSink(srv, db, logger)
 	defer shutdownLogs()
 	if err := attachServerExtensions(srv, host, mitmPort, key, logger, maxRespBytes, maxReqBytes); err != nil {
